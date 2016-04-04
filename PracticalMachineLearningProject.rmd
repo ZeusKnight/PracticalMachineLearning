@@ -1,0 +1,102 @@
+---
+title: "Practical Machine Learning Project"
+author: "ZeusKnight"
+date: "April 3, 2016"
+output: word_document
+---
+
+##Read the data
+Read in both training and testing data
+```{r, echo=FALSE, warning=FALSE, results='hide'}
+library(data.table)
+library(caret)
+library(randomForest)
+library(foreach)
+library(rpart)
+library(rpart.plot)
+library(corrplot)
+```
+```{r}
+training_data <- read.csv("/Users/Oyu-g/Desktop/pml-training.csv", na.strings=c("#DIV/0!"," ", "", "NA", "NAs", "NULL"))
+testing_data <- read.csv("/Users/Oyu-g/Desktop/pml-testing.csv", na.strings=c("#DIV/0!"," ", "", "NA", "NAs", "NULL"))
+```
+
+##Clean the data
+In this particular project, I choose to drop columns with NAs or 0s.
+```{r, results='hide'}
+str(training_data)
+cleantraining <- training_data[, -which(names(training_data) %in% c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "new_window", "num_window"))]
+cleantraining = cleantraining[, colSums(is.na(cleantraining)) == 0] #this drops columns with NAs
+zerovariance =nearZeroVar(cleantraining[sapply(cleantraining, is.numeric)], saveMetrics=TRUE)
+cleantraining = cleantraining[, zerovariance[, 'nzv'] == 0] #to remove 0 or near to 0 variance variables
+correlationmatrix <- cor(na.omit(cleantraining[sapply(cleantraining, is.numeric)]))
+dim(correlationmatrix)
+correlationmatrixdegreesoffreedom <- expand.grid(row = 1:52, col = 1:52)
+correlationmatrixdegreesoffreedom$correlation <- as.vector(correlationmatrix) #this returns the correlation matrix in matrix format
+removehighcorrelation <- findCorrelation(correlationmatrix, cutoff = .7, verbose = TRUE)
+cleantraining <- cleantraining[, -removehighcorrelation] #this removes highly correlated variables (in psychometric theory .7+ correlation is a high correlation)
+
+for(i in c(8:ncol(cleantraining)-1)) {cleantraining[,i] = as.numeric(as.character(cleantraining[,i]))}
+
+for(i in c(8:ncol(testing_data)-1)) {testing_data[,i] = as.numeric(as.character(testing_data[,i]))} #Some columns were blank, hence are dropped. I will use a set that only includes complete columns. I also remove user name, timestamps and windows to have a light data set.
+
+featureset <- colnames(cleantraining[colSums(is.na(cleantraining)) == 0])[-(1:7)]
+modeldata <- cleantraining[featureset]
+featureset #now we have the model data built from our feature set.
+```
+
+##Model
+First of all, we need to split the sample data into two set: 60% for training and 40% for testing.
+```{r}
+idx <- createDataPartition(modeldata$classe, p=0.6, list=FALSE )
+training <- modeldata[idx,]
+testing <- modeldata[-idx,]
+```
+Then we fit a predictive model using the Random Forest method. I used 5 fold cross validation.
+
+```{r}
+control <- trainControl(method="cv", 5)
+model <- train(classe ~ ., data=training, method="rf", trControl=control, ntree=250)
+model
+```
+
+After obtaining the model, we check its performance against the validation set.
+
+```{r}
+predict <- predict(model, testing)
+confusionMatrix(testing$classe, predict)
+
+accuracy <- postResample(predict, testing$classe)
+accuracy
+```
+The estimated accuracy of the model is 97.6% and the estimated out of sample error is 2.4%.
+
+##Predictions
+Apply the model back to the original testing data.
+```{r}
+result <- predict(model, training[, -length(names(training))])
+result
+```
+
+## Tree
+```{r}
+treeModel <- rpart(classe ~ ., data=cleantraining, method="class")
+prp(treeModel) 
+```
+
+## ANSWERS
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+testing_data <- testing_data[featureset[featureset!='classe']]
+answers <- predict(model, newdata=testing_data)
+answers
+
+pml_write_files(answers)
+```
